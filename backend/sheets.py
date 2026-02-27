@@ -16,12 +16,14 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-CACHE_TTL = 30  # seconds
+CACHE_TTL = 30        # 동적 데이터 캐시 (30초)
+STATIC_CACHE_TTL = 300  # 정적 참조 데이터 캐시 (5분)
 
 _client = None
 _spreadsheet = None
 _worksheets = {}
-_cache = {}   # sheet_name -> (timestamp, [dict, ...])
+_cache = {}         # sheet_name -> (timestamp, [dict, ...])  — 동적 데이터
+_static_cache = {}  # sheet_name -> (timestamp, [dict, ...])  — 정적 데이터
 
 
 # ─── 내부 헬퍼 ────────────────────────────────────────────────────────────────
@@ -56,6 +58,19 @@ def _get_worksheet(name):
 
 def _invalidate(name):
     _cache.pop(name, None)
+
+
+def _all_rows_static(sheet_name):
+    """정적 참조 데이터를 5분 캐시로 반환 (직접 읽기 전용)."""
+    now = time.time()
+    if sheet_name in _static_cache:
+        ts, data = _static_cache[sheet_name]
+        if now - ts < STATIC_CACHE_TTL:
+            return data
+    ws = _get_worksheet(sheet_name)
+    records = ws.get_all_records(numericise_ignore=['all'])
+    _static_cache[sheet_name] = (now, records)
+    return records
 
 
 def _all_rows(sheet_name):
@@ -291,3 +306,69 @@ def update_roadmap_items(respondent_id, items):
     if cell_updates:
         ws.update_cells(cell_updates)
     _invalidate('roadmap_items')
+
+
+# ─── 정적 참조 데이터 (Google Sheets에서 읽기 전용, 5분 캐시) ─────────────────
+
+def get_competency_groups():
+    """competency_groups 전체 반환. sub_category가 빈 문자열이면 None으로 정규화."""
+    result = []
+    for r in _all_rows_static('competency_groups'):
+        result.append({
+            'id': int(r['id']),
+            'name': r['name'],
+            'sub_category': r['sub_category'] if r.get('sub_category') else None,
+        })
+    return result
+
+
+def get_competencies():
+    """competencies 전체 반환."""
+    return [
+        {
+            'id': int(r['id']),
+            'group_id': int(r['group_id']),
+            'name': r['name'],
+            'description': r.get('description', ''),
+        }
+        for r in _all_rows_static('competencies')
+    ]
+
+
+def get_scenarios():
+    """scenarios 전체 반환."""
+    return [
+        {
+            'id': int(r['id']),
+            'group_id': int(r['group_id']),
+            'situation': r['situation'],
+        }
+        for r in _all_rows_static('scenarios')
+    ]
+
+
+def get_scenario_competencies():
+    """scenario_competencies 전체 반환."""
+    return [
+        {
+            'id': int(r['id']),
+            'scenario_id': int(r['scenario_id']),
+            'competency_id': int(r['competency_id']),
+        }
+        for r in _all_rows_static('scenario_competencies')
+    ]
+
+
+def get_courses():
+    """courses 전체 반환."""
+    return [
+        {
+            'id': int(r['id']),
+            'competency_id': int(r['competency_id']),
+            'name': r['name'],
+            'description': r.get('description', ''),
+            'duration_hours': int(r['duration_hours']) if r.get('duration_hours') else 0,
+            'semester': r.get('semester', ''),
+        }
+        for r in _all_rows_static('courses')
+    ]

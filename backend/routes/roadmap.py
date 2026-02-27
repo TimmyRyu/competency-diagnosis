@@ -1,23 +1,10 @@
 from flask import Blueprint, request, jsonify
 from collections import defaultdict
-from models import get_db
 import sheets
 
 roadmap_bp = Blueprint('roadmap', __name__)
 
 SEMESTER_ORDER = {'상반기': 1, '하반기': 2, '상시': 3}
-
-
-def _courses_map(conn):
-    rows = conn.execute(
-        'SELECT id, competency_id, name, description, duration_hours, semester FROM courses'
-    ).fetchall()
-    return {r['id']: dict(r) for r in rows}
-
-
-def _competencies_map(conn):
-    rows = conn.execute('SELECT id, name FROM competencies').fetchall()
-    return {r['id']: dict(r) for r in rows}
 
 
 @roadmap_bp.route('/courses/<int:respondent_id>', methods=['GET'])
@@ -32,14 +19,12 @@ def get_courses(respondent_id):
         if rank is not None and (cid not in priority_map or rank < priority_map[cid]):
             priority_map[cid] = rank
 
-    conn = get_db()
-    all_courses = _courses_map(conn)
-    comp_map = _competencies_map(conn)
-    conn.close()
+    all_courses = sheets.get_courses()
+    comp_map = {c['id']: c for c in sheets.get_competencies()}
 
     active_cids = {r['competency_id'] for r in diag_rows}
     grouped = {}
-    for cid_key, course in all_courses.items():
+    for course in all_courses:
         cid = course['competency_id']
         if cid not in active_cids:
             continue
@@ -51,7 +36,7 @@ def get_courses(respondent_id):
                 'courses': [],
             }
         grouped[cid]['courses'].append({
-            'id': cid_key,
+            'id': course['id'],
             'name': course['name'],
             'description': course['description'],
             'duration_hours': course['duration_hours'],
@@ -82,13 +67,10 @@ def generate_roadmap(respondent_id):
     phase1_cut = max(1, total // 3)
     phase2_cut = max(phase1_cut + 1, 2 * total // 3)
 
-    conn = get_db()
-    course_rows = conn.execute('SELECT id, competency_id, semester FROM courses').fetchall()
-    conn.close()
-
+    all_courses = sheets.get_courses()
     courses_by_comp = defaultdict(list)
-    for c in course_rows:
-        courses_by_comp[c['competency_id']].append(dict(c))
+    for c in all_courses:
+        courses_by_comp[c['competency_id']].append(c)
     for cid in courses_by_comp:
         courses_by_comp[cid].sort(key=lambda c: SEMESTER_ORDER.get(c['semester'], 99))
 
@@ -115,22 +97,12 @@ def generate_roadmap(respondent_id):
 def get_roadmap(respondent_id):
     roadmap_rows = sheets.get_roadmap_rows(respondent_id)
 
-    course_ids = list({r['course_id'] for r in roadmap_rows})
-    comp_ids = list({r['competency_id'] for r in roadmap_rows})
-
     phases = {'Phase 1': [], 'Phase 2': [], 'Phase 3': []}
     if not roadmap_rows:
         return jsonify(phases)
 
-    conn = get_db()
-    course_map = {r['id']: dict(r) for r in conn.execute(
-        f"SELECT id, name, description, duration_hours, semester FROM courses "
-        f"WHERE id IN ({','.join('?' * len(course_ids))})", course_ids
-    ).fetchall()}
-    comp_map = {r['id']: dict(r) for r in conn.execute(
-        f"SELECT id, name FROM competencies WHERE id IN ({','.join('?' * len(comp_ids))})", comp_ids
-    ).fetchall()}
-    conn.close()
+    course_map = {c['id']: c for c in sheets.get_courses()}
+    comp_map = {c['id']: c for c in sheets.get_competencies()}
 
     for r in roadmap_rows:
         course = course_map.get(r['course_id'], {})

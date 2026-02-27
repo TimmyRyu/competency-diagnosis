@@ -1,6 +1,5 @@
 from flask import Blueprint, request, jsonify
 from collections import defaultdict
-from models import get_db
 import sheets
 
 diagnosis_bp = Blueprint('diagnosis', __name__)
@@ -46,25 +45,17 @@ def get_diagnosis(respondent_id):
     if not rows:
         return jsonify([])
 
-    # 역량명/그룹명은 SQLite 정적 테이블에서 조회
-    comp_ids = list({r['competency_id'] for r in rows})
-    conn = get_db()
-    comp_rows = conn.execute(
-        f"SELECT c.id, c.name, c.description, g.name as group_name FROM competencies c "
-        f"JOIN competency_groups g ON c.group_id = g.id "
-        f"WHERE c.id IN ({','.join('?' * len(comp_ids))})",
-        comp_ids
-    ).fetchall()
-    conn.close()
-    comp_map = {r['id']: dict(r) for r in comp_rows}
+    # 역량명/그룹명을 Sheets에서 조회
+    comp_map = {c['id']: c for c in sheets.get_competencies()}
+    groups_map = {g['id']: g for g in sheets.get_competency_groups()}
 
     # Python에서 GROUP BY 집계
-    groups = defaultdict(list)
+    grouped = defaultdict(list)
     for row in rows:
-        groups[row['competency_id']].append(row)
+        grouped[row['competency_id']].append(row)
 
     result = []
-    for comp_id, comp_rows_list in groups.items():
+    for comp_id, comp_rows_list in grouped.items():
         count = len(comp_rows_list)
         avg_likert = sum(r['likert_score'] for r in comp_rows_list) / count
         score = count * avg_likert
@@ -73,11 +64,12 @@ def get_diagnosis(respondent_id):
             default=None
         )
         comp_info = comp_map.get(comp_id, {})
+        group_info = groups_map.get(comp_info.get('group_id'), {})
         result.append({
             'competency_id': comp_id,
             'competency_name': comp_info.get('name', ''),
             'competency_description': comp_info.get('description', ''),
-            'group_name': comp_info.get('group_name', ''),
+            'group_name': group_info.get('name', ''),
             'selection_count': count,
             'avg_likert': avg_likert,
             'score': score,
