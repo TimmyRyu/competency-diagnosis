@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 로컬 환경변수 (절대 커밋 금지)
+backend/.env
+backend/.env.save
+*.json.key
+gen-lang-client-*.json
+
+# SQLite (선택: 시드 DB는 커밋 허용)
+# backend/database.db
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
